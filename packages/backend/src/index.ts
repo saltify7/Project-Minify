@@ -37,7 +37,6 @@ const prepareProjectTransfer = (
   filters: unknown,
   sessions: unknown,
   matchReplace: unknown,
-  selectedTypes: unknown,
   replayCollections: unknown
 ): Result<void> => {
   try {
@@ -45,7 +44,6 @@ const prepareProjectTransfer = (
     storedFilters = filters;
     storedSessions = sessions;
     storedMatchReplace = matchReplace;
-    storedSelectedTypes = selectedTypes;
     storedReplayCollections = replayCollections;
     return { kind: "Ok", value: undefined };
   } catch (error) {

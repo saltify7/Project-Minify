@@ -402,7 +402,7 @@ const onDuplicateProjectClick = async () => {
       : [];
 
     // Store them in backend and register project change listener
-    const prepareResult = await sdk.backend.prepareProjectTransfer(scope, filters, sessionsData, matchReplaceData, undefined, replayCollectionsData);
+    const prepareResult = await sdk.backend.prepareProjectTransfer(scope, filters, sessionsData, matchReplaceData, replayCollectionsData);
 
     if (prepareResult.kind === "Error") {
       sdk.window.showToast(prepareResult.error, { variant: "error" });
