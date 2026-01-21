@@ -12,7 +12,7 @@ export default defineConfig({
   id,
   name: "Project Minify",
   description: "Reduce project size by transferring data into another project.",
-  version: "0.1.1",
+  version: "0.1.2",
   author: {
     name: "Saltify",
     email: "saltify7@gmail.com",
