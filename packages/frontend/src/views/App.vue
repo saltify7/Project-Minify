@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import Button from "primevue/button";
-import { ref } from "vue";
+import Card from "primevue/card";
+import { ref, nextTick } from "vue";
 
 import { useSDK } from "@/plugins/sdk";
+import { type Source, type MatchReplaceSection } from "@caido/sdk-frontend/src/types/types/matchReplace";
+import { type HTTPQL } from "@caido/sdk-frontend/src/types/types/utils";
 
 // Retrieve the SDK instance to interact with the backend
 const sdk = useSDK();
@@ -10,8 +13,41 @@ const sdk = useSDK();
 // Flag to only copy when button clicked
 const waitingforprojectchange = ref(false);
 
+// Error log storage
+const errorLog = ref<Array<{ message: string; timestamp: Date; variant: string }>>([]);
+const errorLogContainer = ref<HTMLElement | undefined>();
+
+// Wrapper function to log errors/warnings and show toast
+const showToast = (message: string, options?: { variant?: "error" | "warning" | "info" | "success"; duration?: number }) => {
+  const variant = options?.variant ?? "info";
+  
+  // Log errors and warnings to the error log
+  if (variant === "error" || variant === "warning") {
+    errorLog.value.push({
+      message,
+      timestamp: new Date(),
+      variant
+    });
+    
+    // Scroll to bottom after adding new entry
+    nextTick(() => {
+      if (errorLogContainer.value) {
+        errorLogContainer.value.scrollTop = errorLogContainer.value.scrollHeight;
+      }
+    });
+  }
+  
+  // Show the toast
+  sdk.window.showToast(message, options);
+};
+
+// Clear error log
+const clearErrorLog = () => {
+  errorLog.value = [];
+};
+
 // Handle project change event from backend
-const handleProjectChange = async (projectName: string | undefined) => {
+const handleProjectChange = async (projectName: string | undefined): Promise<void> => {
 
   if (waitingforprojectchange.value == false) {
     return;
@@ -20,14 +56,14 @@ const handleProjectChange = async (projectName: string | undefined) => {
   // reset the flag
   waitingforprojectchange.value = false;
 
-  sdk.window.showToast(`Project changed to: ${projectName ?? "unknown"}. Applying scopes, filters, sessions, and match replace rules...`, {
+  showToast(`Project changed to: ${projectName ?? "unknown"}. Applying scopes, filters, sessions, and match replace rules...`, {
     variant: "info",
   });
 
   // Get the stored scopes and filters
   const storedDataResult = await sdk.backend.getStoredData();
   if (storedDataResult.kind === "Error") {
-    sdk.window.showToast(`Error getting stored data: ${storedDataResult.error}`, {
+    showToast(`Error getting stored data: ${storedDataResult.error}`, {
       variant: "error",
     });
     return;
@@ -38,7 +74,7 @@ const handleProjectChange = async (projectName: string | undefined) => {
   // Get current project
   const projectResult = await sdk.backend.getCurrentProject();
   if (projectResult.kind === "Error") {
-    sdk.window.showToast(`Error getting current project: ${projectResult.error}`, {
+    showToast(`Error getting current project: ${projectResult.error}`, {
       variant: "error",
     });
     return;
@@ -46,7 +82,7 @@ const handleProjectChange = async (projectName: string | undefined) => {
 
   const currentProject = projectResult.value;
   if (currentProject === undefined) {
-    sdk.window.showToast("No current project found", { variant: "error" });
+    showToast("No current project found", { variant: "error" });
     return;
   }
 
@@ -78,7 +114,7 @@ const handleProjectChange = async (projectName: string | undefined) => {
 
     // Apply match replace collections and rules to the new project
     if (matchReplace !== undefined) {
-      const matchReplaceData = matchReplace as { collections: Array<{ id: string; name: string }>; rules: Array<{ id: string; name: string; isEnabled: boolean; query: string; section: unknown; collectionId: string }> };
+      const matchReplaceData = matchReplace as { collections: Array<{ id: string; name: string }>; rules: Array<{ id: string; name: string; isEnabled: boolean; query: HTTPQL; section: MatchReplaceSection; collectionId: string; sources: Array<Source> }> };
       
       // Create match replace collections first and map old IDs to new IDs
       const collectionIdMap = new Map<string, string>();
@@ -102,7 +138,7 @@ const handleProjectChange = async (projectName: string | undefined) => {
           try {
             const newCollection = await sdk.matchReplace.createCollection({ name: collectionData.name });
             if (newCollection === undefined || newCollection.id === undefined) {
-              sdk.window.showToast(
+              showToast(
                 `Error creating match replace collection "${collectionData.name}": Collection was not created`,
                 { variant: "warning" }
               );
@@ -111,7 +147,7 @@ const handleProjectChange = async (projectName: string | undefined) => {
             collectionIdMap.set(collectionData.id, newCollection.id);
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
-            sdk.window.showToast(
+            showToast(
               `Error creating match replace collection "${collectionData.name}": ${errorMessage}`,
               { variant: "warning" }
             );
@@ -130,26 +166,30 @@ const handleProjectChange = async (projectName: string | undefined) => {
             : undefined;
           
           if (newCollectionId === undefined) {
-            sdk.window.showToast(
+            showToast(
               `Skipping rule "${ruleName}": Collection not found or not mapped`,
               { variant: "warning" }
             );
             continue;
           }
+
+
           
           // Try to create the rule - only skip if there's an error
           // Map all fields from the stored rule to createRule options
           // The new SDK uses 'section' which contains all the match/replace logic
+          // Sources parameter (plural) is now required for match replace rules
           try {
-            await (sdk.matchReplace.createRule as unknown as (options: { collectionId: string; name: string; query?: string; section: unknown }) => Promise<unknown>)({
+            await sdk.matchReplace.createRule({
               collectionId: newCollectionId,
               name: rule.name,
               query: rule.query,
-              section: rule.section
+              section: rule.section,
+              sources: []
             });
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
-            sdk.window.showToast(
+            showToast(
               `Error creating rule "${ruleName}": ${errorMessage}`,
               { variant: "warning" }
             );
@@ -184,7 +224,7 @@ const handleProjectChange = async (projectName: string | undefined) => {
           try {
             const newCollection = await sdk.replay.createCollection(collectionData.name);
             if (newCollection === undefined || newCollection.id === undefined) {
-              sdk.window.showToast(
+              showToast(
                 `Error creating replay collection "${collectionData.name}": Collection was not created`,
                 { variant: "warning" }
               );
@@ -193,7 +233,7 @@ const handleProjectChange = async (projectName: string | undefined) => {
             collectionIdMap.set(collectionData.id, newCollection.id);
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
-            sdk.window.showToast(
+            showToast(
               `Error creating replay collection "${collectionData.name}": ${errorMessage}`,
               { variant: "warning" }
             );
@@ -218,7 +258,7 @@ const handleProjectChange = async (projectName: string | undefined) => {
           );
 
           if (createResult.kind === "Error") {
-            sdk.window.showToast(
+            showToast(
               `Error creating session "${sessionData.name}": ${createResult.error}`,
               { variant: "error" }
             );
@@ -237,7 +277,7 @@ const handleProjectChange = async (projectName: string | undefined) => {
               // If renaming fails, log but don't fail the whole operation
               const errorMessage =
                 error instanceof Error ? error.message : "Unknown error occurred";
-              sdk.window.showToast(
+              showToast(
                 `Session created but could not rename to "${sessionData.name}": ${errorMessage}`,
                 { variant: "warning" }
               );
@@ -247,13 +287,13 @@ const handleProjectChange = async (projectName: string | undefined) => {
       }
     }
 
-    sdk.window.showToast("Scopes, filters, sessions, and match replace applied successfully", {
+    showToast("Scopes, filters, sessions, and match replace applied successfully", {
       variant: "success",
     });
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error occurred";
-    sdk.window.showToast(`Error applying scopes/filters: ${errorMessage}`, {
+    showToast(`Error applying scopes/filters: ${errorMessage}`, {
       variant: "error",
     });
   }
@@ -267,13 +307,13 @@ const onDuplicateProjectClick = async () => {
   const projectResult = await sdk.backend.getCurrentProject();
 
   if (projectResult.kind === "Error") {
-    sdk.window.showToast(projectResult.error, { variant: "error" });
+    showToast(projectResult.error, { variant: "error" });
     return;
   }
 
   const currentProject = projectResult.value;
   if (currentProject === undefined) {
-    sdk.window.showToast("No current project found", { variant: "error" });
+    showToast("No current project found", { variant: "error" });
     return;
   }
 
@@ -298,7 +338,7 @@ const onDuplicateProjectClick = async () => {
 
           // Check if session was found
           if (result.replaySession === undefined || result.replaySession === null) {
-            sdk.window.showToast(`Session ${sessionName} not found in GraphQL`, {
+            showToast(`Session ${sessionName} not found in GraphQL`, {
               variant: "warning",
             });
             continue;
@@ -313,7 +353,7 @@ const onDuplicateProjectClick = async () => {
           if (requestId === undefined) {
             const entries = replaySession.entries?.nodes;
             if (entries === undefined || entries.length === 0) {
-              sdk.window.showToast(`Session ${sessionName} has no entries`, {
+              showToast(`Session ${sessionName} has no entries`, {
                 variant: "warning",
               });
               continue;
@@ -329,7 +369,7 @@ const onDuplicateProjectClick = async () => {
 
             // If still no request found after checking all entries
             if (requestId === undefined) {
-              sdk.window.showToast(
+              showToast(
                 `Session ${sessionName} has ${entries.length} entry/entries but none have a request associated. Send the request before duplicating the project.`,
                 { variant: "warning" }
               );
@@ -340,7 +380,7 @@ const onDuplicateProjectClick = async () => {
           // Now get the request data using the request ID
           const sessionResult = await sdk.backend.getSessionByIDWrapper(requestId);
           if (sessionResult.kind === "Error") {
-            sdk.window.showToast(
+            showToast(
               `Error getting request for session ${sessionName}: ${sessionResult.error}`,
               { variant: "error" }
             );
@@ -355,14 +395,14 @@ const onDuplicateProjectClick = async () => {
               collectionId: session.collectionId
             });
           } else {
-            sdk.window.showToast(`Request data is undefined for session ${sessionName}`, {
+            showToast(`Request data is undefined for session ${sessionName}`, {
               variant: "warning",
             });
           }
         } catch (error) {
           const errorMessage =
             error instanceof Error ? error.message : "Unknown error occurred";
-          sdk.window.showToast(
+          showToast(
             `Error querying session ${sessionName}: ${errorMessage}`,
             { variant: "error" }
           );
@@ -373,6 +413,7 @@ const onDuplicateProjectClick = async () => {
 
     // Prepare match replace data (collections and rules)
     // Store all rules - don't filter them out, let the SDK handle validation
+    // Note: MatchReplaceRule type doesn't include sources, but the runtime object might
     const allRules = Array.isArray(rules) ? rules : [];
     
     const matchReplaceData = {
@@ -380,8 +421,14 @@ const onDuplicateProjectClick = async () => {
       rules: allRules.map(r => {
         // Store all fields from MatchReplaceRule - map all properties directly
         // The new SDK uses 'section' instead of matchTerm/replaceTerm/strategy
+        // Sources parameter is now required for match replace rules
         // Type assertion needed because TypeScript may be using old type definitions
-        const rule = r as unknown as { id: string; name: string; isEnabled: boolean; query: string; section: unknown; collectionId: string };
+        // Check if sources exists on the runtime object even though type doesn't include it
+        // MatchReplaceRule type definition doesn't include sources, but it may exist at runtime
+        const rule = r as unknown as { id: string; name: string; isEnabled: boolean; query: HTTPQL; section: MatchReplaceSection; collectionId: string; sources?: Array<Source> };
+        const ruleAny = r as unknown as Record<string, unknown>;
+        // Try to get sources from the rule object, fallback to empty array if not found
+        const sources = (Array.isArray(rule.sources) ? rule.sources : Array.isArray(ruleAny.sources) ? ruleAny.sources : []) as Array<Source>;
         return {
           id: rule.id,
           name: rule.name,
@@ -389,6 +436,7 @@ const onDuplicateProjectClick = async () => {
           query: rule.query,
           section: rule.section,
           collectionId: rule.collectionId,
+          sources: sources,
         };
       }),
     };
@@ -405,18 +453,18 @@ const onDuplicateProjectClick = async () => {
     const prepareResult = await sdk.backend.prepareProjectTransfer(scope, filters, sessionsData, matchReplaceData, replayCollectionsData);
 
     if (prepareResult.kind === "Error") {
-      sdk.window.showToast(prepareResult.error, { variant: "error" });
+      showToast(prepareResult.error, { variant: "error" });
       return;
     }
 
-    sdk.window.showToast(
+    showToast(
       "Scopes, filters, sessions, and match replace captured. Switch to another project to apply them.",
       { variant: "success" }
     );
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error occurred";
-    sdk.window.showToast(`Error preparing project transfer: ${errorMessage}`, {
+    showToast(`Error preparing project transfer: ${errorMessage}`, {
       variant: "error",
     });
   }
@@ -449,6 +497,45 @@ const onDuplicateProjectClick = async () => {
       </div>
       
       <Button label="Duplicate project" @click="onDuplicateProjectClick" class="w-full" />
+      
+      <Card v-if="errorLog.length > 0" class="w-full">
+        <template #header>
+          <div class="flex justify-between items-center p-3">
+            <h3 class="text-lg font-semibold">Error Log</h3>
+            <Button 
+              label="Clear" 
+              severity="secondary" 
+              size="small"
+              @click="clearErrorLog"
+              icon="fas fa-trash"
+            />
+          </div>
+        </template>
+        <template #content>
+          <div 
+            ref="errorLogContainer"
+            class="overflow-y-auto max-h-96 space-y-2 p-2"
+            style="scroll-behavior: smooth;"
+          >
+            <div
+              v-for="(entry, index) in errorLog"
+              :key="index"
+              class="p-2 rounded border"
+              :class="{
+                'bg-red-900/20 border-red-700': entry.variant === 'error',
+                'bg-yellow-900/20 border-yellow-700': entry.variant === 'warning'
+              }"
+            >
+              <div class="flex justify-between items-start gap-2">
+                <span class="text-sm text-surface-300 break-words flex-1">{{ entry.message }}</span>
+                <span class="text-xs text-surface-500 whitespace-nowrap">
+                  {{ entry.timestamp.toLocaleTimeString() }}
+                </span>
+              </div>
+            </div>
+          </div>
+        </template>
+      </Card>
     </div>
   </div>
 </template>
