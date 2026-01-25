@@ -10,9 +10,9 @@
     "primevue": "4.1.0",
     "vue": "3.4.37"
   },
-  "devDependencies": {
-    "@caido/sdk-backend": "^0.54.0",
-    "@caido/sdk-frontend": "^0.54.0",
+  "devDependencies": {  
+    "@caido/sdk-backend": "^0.55.1",
+    "@caido/sdk-frontend": "^0.55.1",
     "@codemirror/view": "6.28.1",
     "backend": "workspace:*",
     "vue-tsc": "2.0.29"

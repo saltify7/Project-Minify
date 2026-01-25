@@ -22,7 +22,7 @@ const showToast = (message: string, options?: { variant?: "error" | "warning" | 
   const variant = options?.variant ?? "info";
   
   // Log errors and warnings to the error log
-  if (variant === "error" || variant === "warning") {
+  if (variant === "error" || variant === "warning" || variant === "info") {
     errorLog.value.push({
       message,
       timestamp: new Date(),
@@ -89,11 +89,14 @@ const handleProjectChange = async (projectName: string | undefined): Promise<voi
   const currentFilters = await sdk.filters.getAll();
   const currentCollections = sdk.matchReplace.getCollections();
 
+  const counts = { scopes: 0, filters: 0, mrRules: 0, replaySessions: 0 };
+
   try {
     // Apply scopes to the new project
     if (scopes !== undefined && Array.isArray(scopes)) {
       for (const scope of scopes) {
         await sdk.scopes.createScope(scope);
+        counts.scopes += 1;
       }
     }
 
@@ -109,6 +112,7 @@ const handleProjectChange = async (projectName: string | undefined): Promise<voi
           continue;
         }
         await sdk.filters.create(filter);
+        counts.filters += 1;
       }
     }
 
@@ -187,6 +191,7 @@ const handleProjectChange = async (projectName: string | undefined): Promise<voi
               section: rule.section,
               sources: []
             });
+            counts.mrRules += 1;
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             showToast(
@@ -265,6 +270,8 @@ const handleProjectChange = async (projectName: string | undefined): Promise<voi
             continue;
           }
 
+          counts.replaySessions += 1;
+
           // Rename the session if a name was provided and we got a session ID
           if (
             createResult.kind === "Ok" &&
@@ -287,9 +294,11 @@ const handleProjectChange = async (projectName: string | undefined): Promise<voi
       }
     }
 
-    showToast("Scopes, filters, sessions, and match replace applied successfully", {
-      variant: "success",
-    });
+    showToast("Transfer complete: applied successfully", { variant: "success" });
+    showToast(`${counts.scopes} scope(s) moved`, { variant: "info" });
+    showToast(`${counts.filters} filter(s) moved`, { variant: "info" });
+    showToast(`${counts.mrRules} match & replace rule(s) moved`, { variant: "info" });
+    showToast(`${counts.replaySessions} replay session(s) moved`, { variant: "info" });
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error occurred";
