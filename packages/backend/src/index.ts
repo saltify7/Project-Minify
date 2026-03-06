@@ -30,6 +30,7 @@ let storedSessions: unknown = undefined;
 let storedMatchReplace: unknown = undefined;
 let storedSelectedTypes: unknown = undefined;
 let storedReplayCollections: unknown = undefined;
+let storedEnvironments: unknown = undefined;
 
 const prepareProjectTransfer = (
   sdk: SDK<API>,
@@ -37,7 +38,8 @@ const prepareProjectTransfer = (
   filters: unknown,
   sessions: unknown,
   matchReplace: unknown,
-  replayCollections: unknown
+  replayCollections: unknown,
+  environments: unknown
 ): Result<void> => {
   try {
     storedScopes = scopes;
@@ -45,6 +47,7 @@ const prepareProjectTransfer = (
     storedSessions = sessions;
     storedMatchReplace = matchReplace;
     storedReplayCollections = replayCollections;
+    storedEnvironments = environments;
     return { kind: "Ok", value: undefined };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
@@ -53,9 +56,9 @@ const prepareProjectTransfer = (
   }
 };
 
-const getStoredData = (sdk: SDK): Result<{ scopes: unknown; filters: unknown; sessions: unknown; matchReplace: unknown; selectedTypes: unknown; replayCollections: unknown }> => {
+const getStoredData = (sdk: SDK): Result<{ scopes: unknown; filters: unknown; sessions: unknown; matchReplace: unknown; selectedTypes: unknown; replayCollections: unknown; environments: unknown }> => {
   try {
-    return { kind: "Ok", value: { scopes: storedScopes, filters: storedFilters, sessions: storedSessions, matchReplace: storedMatchReplace, selectedTypes: storedSelectedTypes, replayCollections: storedReplayCollections } };
+    return { kind: "Ok", value: { scopes: storedScopes, filters: storedFilters, sessions: storedSessions, matchReplace: storedMatchReplace, selectedTypes: storedSelectedTypes, replayCollections: storedReplayCollections, environments: storedEnvironments } };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
     sdk.console.log(`Error getting stored data: ${errorMessage}`);

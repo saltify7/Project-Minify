@@ -36,8 +36,8 @@ importers:
   packages/backend:
     devDependencies:
       '@caido/sdk-backend':
-        specifier: ^0.55.1
-        version: 0.55.1
+        specifier: ^0.55.3
+        version: 0.55.3
 
   packages/frontend:
     dependencies:
@@ -52,11 +52,11 @@ importers:
         version: 3.4.37(typescript@5.5.4)
     devDependencies:
       '@caido/sdk-backend':
-        specifier: ^0.55.1
-        version: 0.55.1
+        specifier: ^0.55.3
+        version: 0.55.3
       '@caido/sdk-frontend':
-        specifier: ^0.55.1
-        version: 0.55.1(@ai-sdk/provider@2.0.0)(@codemirror/state@6.5.2)(@codemirror/view@6.28.1)(vue@3.4.37(typescript@5.5.4))
+        specifier: ^0.55.3
+        version: 0.55.3(@ai-sdk/provider@2.0.0)(@codemirror/state@6.5.2)(@codemirror/view@6.28.1)(vue@3.4.37(typescript@5.5.4))
       '@codemirror/view':
         specifier: 6.28.1
         version: 6.28.1
@@ -114,11 +114,11 @@ packages:
   '@caido/quickjs-types@0.25.4':
     resolution: {integrity: sha512-U7Cvi4aHoCN8T2JB+Az3ArqQ3MUK0PRCtBm5Sq1rfqaJ9NymAkh3O29q77Keh3G/zINq2WTkKZq5qJlvrQNl+Q==}
 
-  '@caido/sdk-backend@0.55.1':
-    resolution: {integrity: sha512-aOLwI9O7RBGjATz4DpjgnhwiGfMpxnJEB+0x1SefPwqKEMjaCA8ViNMx316QZ1KeIBJbCuVhNMOVxUrYW0B3Gw==}
+  '@caido/sdk-backend@0.55.3':
+    resolution: {integrity: sha512-kOrkBtmu8U0qo4kJje7C0BOO9PWf7skKAJM77bVeWJ6aIkxsnBzRyxVxdaD77UbKK3oVT5xUgSx62Ns3xjzSEw==}
 
-  '@caido/sdk-frontend@0.55.1':
-    resolution: {integrity: sha512-AJqpqA+Dlh3jZvYKLyVIb8HQIOT5TJLrDQ1JBr0zhIopptSGqIEZaY2BADYOq667HOwS3Xi/jKuVlboTSjOFnA==}
+  '@caido/sdk-frontend@0.55.3':
+    resolution: {integrity: sha512-ALKnwVAaOQthX9ZVZwJJaQE6abQtvlhjL2kK9a6z0dzfrygAj8LqIV7PKanqzona+8g1DkLJ5ptjNd0q/XtcAA==}
     peerDependencies:
       '@ai-sdk/provider': ^3.0.1
       '@codemirror/state': ^6.0.0
@@ -2495,12 +2495,12 @@ snapshots:
 
   '@caido/quickjs-types@0.25.4': {}
 
-  '@caido/sdk-backend@0.55.1':
+  '@caido/sdk-backend@0.55.3':
     dependencies:
       '@caido/quickjs-types': 0.25.4
       '@caido/sdk-shared': 0.1.1
 
-  '@caido/sdk-frontend@0.55.1(@ai-sdk/provider@2.0.0)(@codemirror/state@6.5.2)(@codemirror/view@6.28.1)(vue@3.4.37(typescript@5.5.4))':
+  '@caido/sdk-frontend@0.55.3(@ai-sdk/provider@2.0.0)(@codemirror/state@6.5.2)(@codemirror/view@6.28.1)(vue@3.4.37(typescript@5.5.4))':
     dependencies:
       '@ai-sdk/provider': 2.0.0
       '@codemirror/state': 6.5.2

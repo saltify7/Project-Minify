@@ -56,7 +56,7 @@ const handleProjectChange = async (projectName: string | undefined): Promise<voi
   // reset the flag
   waitingforprojectchange.value = false;
 
-  showToast(`Project changed to: ${projectName ?? "unknown"}. Applying scopes, filters, sessions, and match replace rules...`, {
+  showToast(`Project changed to: ${projectName ?? "unknown"}. Applying scopes, filters, sessions, match replace rules, and environments...`, {
     variant: "info",
   });
 
@@ -69,7 +69,7 @@ const handleProjectChange = async (projectName: string | undefined): Promise<voi
     return;
   }
 
-  const { scopes, filters, sessions, matchReplace, replayCollections } = storedDataResult.value;
+  const { scopes, filters, sessions, matchReplace, replayCollections, environments } = storedDataResult.value;
 
   // Get current project
   const projectResult = await sdk.backend.getCurrentProject();
@@ -89,7 +89,7 @@ const handleProjectChange = async (projectName: string | undefined): Promise<voi
   const currentFilters = await sdk.filters.getAll();
   const currentCollections = sdk.matchReplace.getCollections();
 
-  const counts = { scopes: 0, filters: 0, mrRules: 0, replaySessions: 0 };
+  const counts = { scopes: 0, filters: 0, mrRules: 0, replaySessions: 0, environments: 0 };
 
   try {
     // Apply scopes to the new project
@@ -294,11 +294,72 @@ const handleProjectChange = async (projectName: string | undefined): Promise<voi
       }
     }
 
+    // Apply environments
+    if (environments !== undefined && environments !== null) {
+      type StoredEnvVar = { kind: string; name: string; value: string };
+      type StoredEnv = { name: string; variables: StoredEnvVar[] };
+
+      const envList = environments as StoredEnv[];
+      const existingEnvsResult = await sdk.graphql.environments();
+
+      for (const env of envList) {
+        const existing = existingEnvsResult.environments.find(e => e.name === env.name);
+
+        if (existing === undefined) {
+          try {
+            await sdk.graphql.createEnvironment({
+              input: {
+                name: env.name,
+                variables: env.variables.map(v => ({
+                  kind: v.kind as "PLAIN" | "SECRET",
+                  name: v.name,
+                  value: v.value,
+                })),
+              },
+            });
+            counts.environments += 1;
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            showToast(`Error creating environment "${env.name}": ${msg}`, { variant: "warning" });
+          }
+          continue;
+        }
+
+        // Merge into existing environment: stored vars override by name, new vars are added
+        const existingDetail = await sdk.graphql.environment({ id: existing.id });
+        if (existingDetail.environment === undefined || existingDetail.environment === null) {
+          showToast(`Could not fetch existing environment "${env.name}" for update`, { variant: "warning" });
+          continue;
+        }
+
+        const varMap = new Map(existingDetail.environment.variables.map(v => [v.name, { kind: v.kind, name: v.name, value: v.value }]));
+        for (const v of env.variables) {
+          varMap.set(v.name, { kind: v.kind as "PLAIN" | "SECRET", name: v.name, value: v.value });
+        }
+
+        try {
+          await sdk.graphql.updateEnvironment({
+            id: existing.id,
+            input: {
+              name: existing.name,
+              variables: Array.from(varMap.values()),
+              version: existing.version,
+            },
+          });
+          counts.environments += 1;
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          showToast(`Error updating environment "${env.name}": ${msg}`, { variant: "warning" });
+        }
+      }
+    }
+
     showToast("Transfer complete: applied successfully", { variant: "success" });
     showToast(`${counts.scopes} scope(s) moved`, { variant: "info" });
     showToast(`${counts.filters} filter(s) moved`, { variant: "info" });
     showToast(`${counts.mrRules} match & replace rule(s) moved`, { variant: "info" });
     showToast(`${counts.replaySessions} replay session(s) moved`, { variant: "info" });
+    showToast(`${counts.environments} environment(s) moved`, { variant: "info" });
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error occurred";
@@ -450,16 +511,30 @@ const onDuplicateProjectClick = async () => {
       }),
     };
 
+    // Fetch all environments with their variables
+    const envsQueryResult = await sdk.graphql.environments();
+    const envs: Array<{ name: string; variables: Array<{ kind: string; name: string; value: string }> }> = [];
+
+    for (const env of envsQueryResult.environments) {
+      const detail = await sdk.graphql.environment({ id: env.id });
+      if (detail.environment !== undefined && detail.environment !== null) {
+        envs.push({
+          name: detail.environment.name,
+          variables: detail.environment.variables.map(v => ({ kind: v.kind, name: v.name, value: v.value })),
+        });
+      }
+    }
+
     // Set the flag to true to await project change event
     waitingforprojectchange.value = true;
 
     // Prepare replay collections data
-    const replayCollectionsData = Array.isArray(replayCollections) 
+    const replayCollectionsData = Array.isArray(replayCollections)
       ? replayCollections.map(c => ({ id: c.id, name: c.name }))
       : [];
 
     // Store them in backend and register project change listener
-    const prepareResult = await sdk.backend.prepareProjectTransfer(scope, filters, sessionsData, matchReplaceData, replayCollectionsData);
+    const prepareResult = await sdk.backend.prepareProjectTransfer(scope, filters, sessionsData, matchReplaceData, replayCollectionsData, envs);
 
     if (prepareResult.kind === "Error") {
       showToast(prepareResult.error, { variant: "error" });
@@ -467,7 +542,7 @@ const onDuplicateProjectClick = async () => {
     }
 
     showToast(
-      "Scopes, filters, sessions, and match replace captured. Switch to another project to apply them.",
+      "Scopes, filters, sessions, match replace, and environments captured. Switch to another project to apply them.",
       { variant: "success" }
     );
   } catch (error) {
@@ -502,6 +577,7 @@ const onDuplicateProjectClick = async () => {
             <li><strong style="color: #dc2626;">NOTE</strong> - <span>Replay sessions need to be sent first - sessions with a blank response will not be copied</span></li>
           </ul>
           <li><strong>Match & Replace Rules</strong> - All match & replace rules with their full configurations and associated collections</li>
+          <li><strong>Environments</strong> - All environments and their variables (merges into existing environments by name, stored variables take precedence)</li>
         </ul>
       </div>
       
