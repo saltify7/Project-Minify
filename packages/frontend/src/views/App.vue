@@ -10,35 +10,23 @@ import { type HTTPQL } from "@caido/sdk-frontend/src/types/types/utils";
 // Retrieve the SDK instance to interact with the backend
 const sdk = useSDK();
 
-// Flag to only copy when button clicked
-const waitingforprojectchange = ref(false);
+// State for the copy/paste flow
+const copyReady = ref(false);
+const projectSwitched = ref(false);
+const pendingProjectName = ref<string | undefined>(undefined);
 
 // Error log storage
 const errorLog = ref<Array<{ message: string; timestamp: Date; variant: string }>>([]);
 const errorLogContainer = ref<HTMLElement | undefined>();
 
-// Wrapper function to log errors/warnings and show toast
-const showToast = (message: string, options?: { variant?: "error" | "warning" | "info" | "success"; duration?: number }) => {
-  const variant = options?.variant ?? "info";
-  
-  // Log errors and warnings to the error log
-  if (variant === "error" || variant === "warning" || variant === "info") {
-    errorLog.value.push({
-      message,
-      timestamp: new Date(),
-      variant
-    });
-    
-    // Scroll to bottom after adding new entry
-    nextTick(() => {
-      if (errorLogContainer.value) {
-        errorLogContainer.value.scrollTop = errorLogContainer.value.scrollHeight;
-      }
-    });
-  }
-  
-  // Show the toast
-  sdk.window.showToast(message, options);
+// Log a message to the error log panel (no toast)
+const logEntry = (message: string, variant: "error" | "warning" | "info" = "info") => {
+  errorLog.value.push({ message, timestamp: new Date(), variant });
+  nextTick(() => {
+    if (errorLogContainer.value) {
+      errorLogContainer.value.scrollTop = errorLogContainer.value.scrollHeight;
+    }
+  });
 };
 
 // Clear error log
@@ -46,26 +34,14 @@ const clearErrorLog = () => {
   errorLog.value = [];
 };
 
-// Handle project change event from backend
-const handleProjectChange = async (projectName: string | undefined): Promise<void> => {
-
-  if (waitingforprojectchange.value == false) {
-    return;
-  }
-
-  // reset the flag
-  waitingforprojectchange.value = false;
-
-  showToast(`Project changed to: ${projectName ?? "unknown"}. Applying scopes, filters, sessions, match replace rules, and environments...`, {
-    variant: "info",
-  });
+// Apply stored data to the current project
+const applyStoredData = async (projectName: string | undefined): Promise<void> => {
 
   // Get the stored scopes and filters
   const storedDataResult = await sdk.backend.getStoredData();
   if (storedDataResult.kind === "Error") {
-    showToast(`Error getting stored data: ${storedDataResult.error}`, {
-      variant: "error",
-    });
+    logEntry(`Error getting stored data: ${storedDataResult.error}`, "error");
+    sdk.window.showToast("Transfer failed — see error log", { variant: "error" });
     return;
   }
 
@@ -74,15 +50,15 @@ const handleProjectChange = async (projectName: string | undefined): Promise<voi
   // Get current project
   const projectResult = await sdk.backend.getCurrentProject();
   if (projectResult.kind === "Error") {
-    showToast(`Error getting current project: ${projectResult.error}`, {
-      variant: "error",
-    });
+    logEntry(`Error getting current project: ${projectResult.error}`, "error");
+    sdk.window.showToast("Transfer failed — see error log", { variant: "error" });
     return;
   }
 
   const currentProject = projectResult.value;
   if (currentProject === undefined) {
-    showToast("No current project found", { variant: "error" });
+    logEntry("No current project found", "error");
+    sdk.window.showToast("Transfer failed — see error log", { variant: "error" });
     return;
   }
 
@@ -90,6 +66,7 @@ const handleProjectChange = async (projectName: string | undefined): Promise<voi
   const currentCollections = sdk.matchReplace.getCollections();
 
   const counts = { scopes: 0, filters: 0, mrRules: 0, replaySessions: 0, environments: 0 };
+  let hadWarnings = false;
 
   try {
     // Apply scopes to the new project
@@ -119,66 +96,58 @@ const handleProjectChange = async (projectName: string | undefined): Promise<voi
     // Apply match replace collections and rules to the new project
     if (matchReplace !== undefined) {
       const matchReplaceData = matchReplace as { collections: Array<{ id: string; name: string }>; rules: Array<{ id: string; name: string; isEnabled: boolean; query: HTTPQL; section: MatchReplaceSection; collectionId: string; sources: Array<Source> }> };
-      
+
       // Create match replace collections first and map old IDs to new IDs
       const collectionIdMap = new Map<string, string>();
-      
+
       if (matchReplaceData.collections !== undefined && Array.isArray(matchReplaceData.collections)) {
         for (const collection of matchReplaceData.collections) {
           const collectionData = collection as { id: string; name: string };
-          
+
           // Check if collection with same name already exists
           let existingCollection: { id: string; name: string } | undefined = undefined;
           if (Array.isArray(currentCollections)) {
             existingCollection = currentCollections.find(c => c.name === collectionData.name);
           }
-          
+
           if (existingCollection !== undefined) {
             collectionIdMap.set(collectionData.id, existingCollection.id);
             continue;
           }
-          
+
           // Create new collection using frontend SDK
           try {
             const newCollection = await sdk.matchReplace.createCollection({ name: collectionData.name });
             if (newCollection === undefined || newCollection.id === undefined) {
-              showToast(
-                `Error creating match replace collection "${collectionData.name}": Collection was not created`,
-                { variant: "warning" }
-              );
+              logEntry(`Error creating match replace collection "${collectionData.name}": Collection was not created`, "warning");
+              hadWarnings = true;
               continue;
             }
             collectionIdMap.set(collectionData.id, newCollection.id);
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
-            showToast(
-              `Error creating match replace collection "${collectionData.name}": ${errorMessage}`,
-              { variant: "warning" }
-            );
+            logEntry(`Error creating match replace collection "${collectionData.name}": ${errorMessage}`, "warning");
+            hadWarnings = true;
           }
         }
       }
-      
+
       // Create rules with mapped collection IDs
       if (matchReplaceData.rules !== undefined && Array.isArray(matchReplaceData.rules)) {
         for (const rule of matchReplaceData.rules) {
           const ruleName = rule.name ?? "Unknown Rule";
-          
+
           // Get the mapped collection ID
           const newCollectionId = rule.collectionId !== undefined && rule.collectionId !== ""
             ? collectionIdMap.get(rule.collectionId)
             : undefined;
-          
+
           if (newCollectionId === undefined) {
-            showToast(
-              `Skipping rule "${ruleName}": Collection not found or not mapped`,
-              { variant: "warning" }
-            );
+            logEntry(`Skipping rule "${ruleName}": Collection not found or not mapped`, "warning");
+            hadWarnings = true;
             continue;
           }
 
-
-          
           // Try to create the rule - only skip if there's an error
           // Map all fields from the stored rule to createRule options
           // The new SDK uses 'section' which contains all the match/replace logic
@@ -194,10 +163,8 @@ const handleProjectChange = async (projectName: string | undefined): Promise<voi
             counts.mrRules += 1;
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
-            showToast(
-              `Error creating rule "${ruleName}": ${errorMessage}`,
-              { variant: "warning" }
-            );
+            logEntry(`Error creating rule "${ruleName}": ${errorMessage}`, "warning");
+            hadWarnings = true;
           }
         }
       }
@@ -207,55 +174,51 @@ const handleProjectChange = async (projectName: string | undefined): Promise<voi
     if (sessions !== undefined) {
       // Create replay collections first and map old IDs to new IDs
       const collectionIdMap = new Map<string, string>();
-      
+
       if (replayCollections !== undefined && Array.isArray(replayCollections)) {
         const currentReplayCollections = sdk.replay.getCollections();
-        
+
         for (const collection of replayCollections) {
           const collectionData = collection as { id: string; name: string };
-          
+
           // Check if collection with same name already exists
           let existingCollection: { id: string; name: string } | undefined = undefined;
           if (Array.isArray(currentReplayCollections)) {
             existingCollection = currentReplayCollections.find(c => c.name === collectionData.name);
           }
-          
+
           if (existingCollection !== undefined) {
             collectionIdMap.set(collectionData.id, existingCollection.id);
             continue;
           }
-          
+
           // Create new collection using frontend SDK
           try {
             const newCollection = await sdk.replay.createCollection(collectionData.name);
             if (newCollection === undefined || newCollection.id === undefined) {
-              showToast(
-                `Error creating replay collection "${collectionData.name}": Collection was not created`,
-                { variant: "warning" }
-              );
+              logEntry(`Error creating replay collection "${collectionData.name}": Collection was not created`, "warning");
+              hadWarnings = true;
               continue;
             }
             collectionIdMap.set(collectionData.id, newCollection.id);
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
-            showToast(
-              `Error creating replay collection "${collectionData.name}": ${errorMessage}`,
-              { variant: "warning" }
-            );
+            logEntry(`Error creating replay collection "${collectionData.name}": ${errorMessage}`, "warning");
+            hadWarnings = true;
           }
         }
       }
-      
+
       // Create sessions with mapped collection IDs
       if (Array.isArray(sessions)) {
         for (const session of sessions) {
           const sessionData = session as { rawBytes: number[]; url: string; name: string; collectionId: string };
-          
+
           // Get the mapped collection ID
-          const newCollectionId = sessionData.collectionId !== undefined 
+          const newCollectionId = sessionData.collectionId !== undefined
             ? collectionIdMap.get(sessionData.collectionId)
             : undefined;
-          
+
           const createResult = await sdk.backend.createSessionWrapper(
             sessionData.rawBytes,
             sessionData.url,
@@ -263,10 +226,8 @@ const handleProjectChange = async (projectName: string | undefined): Promise<voi
           );
 
           if (createResult.kind === "Error") {
-            showToast(
-              `Error creating session "${sessionData.name}": ${createResult.error}`,
-              { variant: "error" }
-            );
+            logEntry(`Error creating session "${sessionData.name}": ${createResult.error}`, "error");
+            hadWarnings = true;
             continue;
           }
 
@@ -282,12 +243,9 @@ const handleProjectChange = async (projectName: string | undefined): Promise<voi
               await sdk.replay.renameSession(createResult.value, sessionData.name);
             } catch (error) {
               // If renaming fails, log but don't fail the whole operation
-              const errorMessage =
-                error instanceof Error ? error.message : "Unknown error occurred";
-              showToast(
-                `Session created but could not rename to "${sessionData.name}": ${errorMessage}`,
-                { variant: "warning" }
-              );
+              const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
+              logEntry(`Session created but could not rename to "${sessionData.name}": ${errorMessage}`, "warning");
+              hadWarnings = true;
             }
           }
         }
@@ -320,7 +278,8 @@ const handleProjectChange = async (projectName: string | undefined): Promise<voi
             counts.environments += 1;
           } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
-            showToast(`Error creating environment "${env.name}": ${msg}`, { variant: "warning" });
+            logEntry(`Error creating environment "${env.name}": ${msg}`, "warning");
+            hadWarnings = true;
           }
           continue;
         }
@@ -328,7 +287,8 @@ const handleProjectChange = async (projectName: string | undefined): Promise<voi
         // Merge into existing environment: stored vars override by name, new vars are added
         const existingDetail = await sdk.graphql.environment({ id: existing.id });
         if (existingDetail.environment === undefined || existingDetail.environment === null) {
-          showToast(`Could not fetch existing environment "${env.name}" for update`, { variant: "warning" });
+          logEntry(`Could not fetch existing environment "${env.name}" for update`, "warning");
+          hadWarnings = true;
           continue;
         }
 
@@ -349,41 +309,47 @@ const handleProjectChange = async (projectName: string | undefined): Promise<voi
           counts.environments += 1;
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
-          showToast(`Error updating environment "${env.name}": ${msg}`, { variant: "warning" });
+          logEntry(`Error updating environment "${env.name}": ${msg}`, "warning");
+          hadWarnings = true;
         }
       }
     }
 
-    showToast("Transfer complete: applied successfully", { variant: "success" });
-    showToast(`${counts.scopes} scope(s) moved`, { variant: "info" });
-    showToast(`${counts.filters} filter(s) moved`, { variant: "info" });
-    showToast(`${counts.mrRules} match & replace rule(s) moved`, { variant: "info" });
-    showToast(`${counts.replaySessions} replay session(s) moved`, { variant: "info" });
-    showToast(`${counts.environments} environment(s) moved`, { variant: "info" });
+    logEntry(`Transfer to "${projectName ?? "unknown"}" complete: ${counts.scopes} scope(s), ${counts.filters} filter(s), ${counts.mrRules} match & replace rule(s), ${counts.replaySessions} replay session(s), ${counts.environments} environment(s)`, "info");
+
+    if (hadWarnings) {
+      sdk.window.showToast("Transfer complete with warnings — see error log", { variant: "warning" });
+    } else {
+      sdk.window.showToast("Transfer complete", { variant: "success" });
+    }
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error occurred";
-    showToast(`Error applying scopes/filters: ${errorMessage}`, {
-      variant: "error",
-    });
+    const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
+    logEntry(`Error applying data: ${errorMessage}`, "error");
+    sdk.window.showToast("Transfer failed — see error log", { variant: "error" });
   }
 };
 
-// Await project change event
-sdk.backend.onEvent("projectChanged", name => handleProjectChange(name));
+// Detect project change — just set flags, paste button triggers the actual apply
+sdk.backend.onEvent("projectChanged", name => {
+  if (!copyReady.value) return;
+  projectSwitched.value = true;
+  pendingProjectName.value = name;
+});
 
-// Prepare project transfer - get scopes/filters and register listener
-const onDuplicateProjectClick = async () => {
+// Copy Project — capture data from the current project
+const onCopyProjectClick = async () => {
   const projectResult = await sdk.backend.getCurrentProject();
 
   if (projectResult.kind === "Error") {
-    showToast(projectResult.error, { variant: "error" });
+    logEntry(projectResult.error, "error");
+    sdk.window.showToast("Failed to read project — see error log", { variant: "error" });
     return;
   }
 
   const currentProject = projectResult.value;
   if (currentProject === undefined) {
-    showToast("No current project found", { variant: "error" });
+    logEntry("No current project found", "error");
+    sdk.window.showToast("Failed to read project — see error log", { variant: "error" });
     return;
   }
 
@@ -397,6 +363,7 @@ const onDuplicateProjectClick = async () => {
     const rules = sdk.matchReplace.getRules();
 
     const sessionsData: Array<{ rawBytes: number[]; url: string; name: string; collectionId: string }> = [];
+    let skippedSessionCount = 0;
 
     if (sessions !== undefined && Array.isArray(sessions)) {
       for (const session of sessions) {
@@ -408,9 +375,8 @@ const onDuplicateProjectClick = async () => {
 
           // Check if session was found
           if (result.replaySession === undefined || result.replaySession === null) {
-            showToast(`Session ${sessionName} not found in GraphQL`, {
-              variant: "warning",
-            });
+            logEntry(`Session "${sessionName}" not found in GraphQL`, "warning");
+            skippedSessionCount += 1;
             continue;
           }
 
@@ -418,14 +384,13 @@ const onDuplicateProjectClick = async () => {
 
           // Get request ID from the active entry first
           let requestId: string | undefined = replaySession.activeEntry?.request?.id;
-          
+
           // If no active entry or active entry has no request, search through all entries
           if (requestId === undefined) {
             const entries = replaySession.entries?.nodes;
             if (entries === undefined || entries.length === 0) {
-              showToast(`Session ${sessionName} has no entries`, {
-                variant: "warning",
-              });
+              logEntry(`Session "${sessionName}" has no entries`, "warning");
+              skippedSessionCount += 1;
               continue;
             }
 
@@ -439,10 +404,11 @@ const onDuplicateProjectClick = async () => {
 
             // If still no request found after checking all entries
             if (requestId === undefined) {
-              showToast(
-                `Session ${sessionName} has ${entries.length} entry/entries but none have a request associated. Send the request before duplicating the project.`,
-                { variant: "warning" }
+              logEntry(
+                `Session "${sessionName}" has ${entries.length} entry/entries but none have a request associated. Send the request before duplicating the project.`,
+                "warning"
               );
+              skippedSessionCount += 1;
               continue;
             }
           }
@@ -450,32 +416,26 @@ const onDuplicateProjectClick = async () => {
           // Now get the request data using the request ID
           const sessionResult = await sdk.backend.getSessionByIDWrapper(requestId);
           if (sessionResult.kind === "Error") {
-            showToast(
-              `Error getting request for session ${sessionName}: ${sessionResult.error}`,
-              { variant: "error" }
-            );
+            logEntry(`Error getting request for session "${sessionName}": ${sessionResult.error}`, "error");
+            skippedSessionCount += 1;
             continue;
           }
           if (sessionResult.value !== undefined) {
             // Backend already extracts raw bytes and URL before serialization
             // Include the session name and collectionId so we can rename it and assign to collection after creation
-            sessionsData.push({ 
-              ...sessionResult.value, 
+            sessionsData.push({
+              ...sessionResult.value,
               name: sessionName,
               collectionId: session.collectionId
             });
           } else {
-            showToast(`Request data is undefined for session ${sessionName}`, {
-              variant: "warning",
-            });
+            logEntry(`Request data is undefined for session "${sessionName}"`, "warning");
+            skippedSessionCount += 1;
           }
         } catch (error) {
-          const errorMessage =
-            error instanceof Error ? error.message : "Unknown error occurred";
-          showToast(
-            `Error querying session ${sessionName}: ${errorMessage}`,
-            { variant: "error" }
-          );
+          const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
+          logEntry(`Error querying session "${sessionName}": ${errorMessage}`, "error");
+          skippedSessionCount += 1;
           continue;
         }
       }
@@ -485,7 +445,7 @@ const onDuplicateProjectClick = async () => {
     // Store all rules - don't filter them out, let the SDK handle validation
     // Note: MatchReplaceRule type doesn't include sources, but the runtime object might
     const allRules = Array.isArray(rules) ? rules : [];
-    
+
     const matchReplaceData = {
       collections: Array.isArray(collections) ? collections.map(c => ({ id: c.id, name: c.name })) : [],
       rules: allRules.map(r => {
@@ -525,9 +485,6 @@ const onDuplicateProjectClick = async () => {
       }
     }
 
-    // Set the flag to true to await project change event
-    waitingforprojectchange.value = true;
-
     // Prepare replay collections data
     const replayCollectionsData = Array.isArray(replayCollections)
       ? replayCollections.map(c => ({ id: c.id, name: c.name }))
@@ -537,21 +494,46 @@ const onDuplicateProjectClick = async () => {
     const prepareResult = await sdk.backend.prepareProjectTransfer(scope, filters, sessionsData, matchReplaceData, replayCollectionsData, envs);
 
     if (prepareResult.kind === "Error") {
-      showToast(prepareResult.error, { variant: "error" });
+      logEntry(prepareResult.error, "error");
+      sdk.window.showToast("Failed to capture data — see error log", { variant: "error" });
       return;
     }
 
-    showToast(
-      "Scopes, filters, sessions, match replace, and environments captured. Switch to another project to apply them.",
-      { variant: "success" }
-    );
+    // Mark copy as done and reset any previous project switch
+    copyReady.value = true;
+    projectSwitched.value = false;
+    pendingProjectName.value = undefined;
+
+    if (skippedSessionCount > 0) {
+      sdk.window.showToast(`Data captured (${skippedSessionCount} session(s) skipped — see error log). Switch project then click Paste Project.`, { variant: "warning" });
+    } else {
+      sdk.window.showToast("Data captured. Switch project then click Paste Project.", { variant: "success" });
+    }
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error occurred";
-    showToast(`Error preparing project transfer: ${errorMessage}`, {
-      variant: "error",
-    });
+    const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
+    logEntry(`Error preparing project transfer: ${errorMessage}`, "error");
+    sdk.window.showToast("Failed to capture data — see error log", { variant: "error" });
   }
+};
+
+// Paste Project — apply captured data to the current project
+const onPasteProjectClick = async () => {
+  if (!copyReady.value) {
+    sdk.window.showToast("Please copy a project first", { variant: "error" });
+    return;
+  }
+  if (!projectSwitched.value) {
+    sdk.window.showToast("Please change project first", { variant: "error" });
+    return;
+  }
+
+  // Reset state before applying so a second paste isn't possible without re-copying
+  copyReady.value = false;
+  projectSwitched.value = false;
+  const name = pendingProjectName.value;
+  pendingProjectName.value = undefined;
+
+  await applyStoredData(name);
 };
 </script>
 
@@ -561,9 +543,9 @@ const onDuplicateProjectClick = async () => {
       <div class="flex flex-col gap-3">
         <h2 class="text-xl font-semibold">How to Use</h2>
         <div class="text-surface-300 space-y-2">
-          <p>1. Click the "Duplicate project" button below from the project you want to copy.</p>
+          <p>1. Click "Copy Project" from the project you want to copy.</p>
           <p>2. Switch to another project (or create a new one).</p>
-          <p>3. The plugin will automatically copy all items to the new project.</p>
+          <p>3. Click "Paste Project" to apply the copied data to the new project.</p>
         </div>
       </div>
       
@@ -581,7 +563,10 @@ const onDuplicateProjectClick = async () => {
         </ul>
       </div>
       
-      <Button label="Duplicate project" @click="onDuplicateProjectClick" class="w-full" />
+      <div class="flex gap-3">
+        <Button label="Copy Project" @click="onCopyProjectClick" class="flex-1" icon="fas fa-copy" severity="secondary" />
+        <Button label="Paste Project" @click="onPasteProjectClick" class="flex-1" icon="fas fa-paste" severity="secondary" />
+      </div>
       
       <Card v-if="errorLog.length > 0" class="w-full">
         <template #header>
